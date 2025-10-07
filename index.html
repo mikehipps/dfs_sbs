@@ -5,34 +5,74 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>CSV Match (Round 4)</title>
 <style>
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+  :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  body { margin: 24px; background: var(--bg); color: var(--text); transition: background 0.2s ease, color 0.2s ease; }
+  body.theme-light {
+    color-scheme: light;
+    --bg: #f5f7fa;
+    --text: #111;
+    --surface: #ffffff;
+    --surface-alt: #f0f2f6;
+    --border: #d0d5dd;
+    --muted: #5f6b7a;
+    --chip-bg: #e8ecf5;
+    --chip-text: #0b7285;
+    --ok: #0a7;
+    --warn: #b50;
+    --bad: #c00;
+    --code-bg: #f1f3f8;
+    --table-header: #e8ecf5;
+    --input-bg: #ffffff;
+  }
+  body.theme-dark {
+    color-scheme: dark;
+    --bg: #0f172a;
+    --text: #e2e8f0;
+    --surface: #1e293b;
+    --surface-alt: #24324d;
+    --border: #334155;
+    --muted: #94a3b8;
+    --chip-bg: #1e3a8a;
+    --chip-text: #e0f2fe;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --code-bg: #1f2937;
+    --table-header: #1e293b;
+    --input-bg: #0f172a;
+  }
   h1 { margin: 0 0 12px; }
-  fieldset { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
+  fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 12px 0; background: var(--surface); }
   legend { padding: 0 6px; }
   label { display: inline-block; margin: 6px 12px 6px 0; }
-  select, input[type="text"], button { padding: 6px 8px; margin: 4px 8px; }
+  select, input[type="text"], button { padding: 6px 8px; margin: 4px 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  button { cursor: pointer; background: var(--chip-bg); color: var(--chip-text); border: none; font-weight: 600; }
+  .theme-toggle { margin-left: 0; }
   .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
   .col { flex: 1 1 320px; }
-  .muted { color: #666; }
-  .chip { display: inline-block; padding: 2px 6px; background: #f1f1f1; border-radius: 6px; margin-right: 6px; }
-  .ok { color: #0a7; font-weight: 600; }
-  .warn { color: #b50; font-weight: 600; }
-  .bad { color: #c00; font-weight: 600; }
-  .box { border: 1px dashed #bbb; border-radius: 8px; padding: 10px; }
+  .muted { color: var(--muted); }
+  .chip { display: inline-block; padding: 2px 6px; background: var(--chip-bg); border-radius: 6px; margin-right: 6px; color: var(--chip-text); }
+  .ok { color: var(--ok); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .box { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; background: var(--surface-alt); }
   .grid { display: grid; grid-template-columns: repeat(2, minmax(260px,1fr)); gap: 12px; }
   .small { font-size: 12px; }
-  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f8f8f8; padding: 2px 4px; border-radius: 4px; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 2px 4px; border-radius: 4px; }
   table { border-collapse: collapse; width: 100%; }
-  th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
-  th { background: #fafafa; position: sticky; top: 0; }
-  .review-table { max-height: 300px; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+  th, td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+  th { background: var(--table-header); position: sticky; top: 0; }
+  .review-table { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
   .row-inline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
 </head>
-<body>
-<h1>CSV Match (Round 4)</h1>
+<body class="theme-dark">
+<div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 12px;">
+  <h1 style="margin: 0;">CSV Match (Round 4)</h1>
+  <button id="themeToggle" class="theme-toggle" type="button">Switch theme</button>
+</div>
 <p class="muted">Upload two CSVs, choose a <b>Primary</b>, map <b>Name</b>/<b>Team</b> (Name can be composed like first+last), review unresolved rows, then export. All in-browser.</p>
 <div class="row">
   <label><b>Sport</b>
@@ -373,6 +413,7 @@ let mergedStore = null, manifest = null;
 let reviewItems = [];
 
 // ---------- UI refs ----------
+const themeToggle = document.getElementById("themeToggle");
 const sportSelect = document.getElementById("sportSelect");
 const fileA = document.getElementById("fileA");
 const fileB = document.getElementById("fileB");
@@ -404,6 +445,26 @@ const summary = document.getElementById("summary");
 const reviewSection = document.getElementById("reviewSection");
 const reviewBody = document.getElementById("reviewBody");
 const btnApplyReview = document.getElementById("btnApplyReview");
+
+function applyTheme(theme) {
+  const next = theme === "theme-light" ? "theme-light" : "theme-dark";
+  document.body.classList.remove("theme-light", "theme-dark");
+  document.body.classList.add(next);
+  if (themeToggle) {
+    themeToggle.textContent = next === "theme-dark" ? "Switch to Light Mode" : "Switch to Dark Mode";
+  }
+  localStorage.setItem("csvMatchTheme", next);
+}
+
+const preferredTheme = localStorage.getItem("csvMatchTheme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "theme-dark" : "theme-light");
+applyTheme(preferredTheme);
+
+if (themeToggle) {
+  themeToggle.addEventListener("click", () => {
+    const next = document.body.classList.contains("theme-dark") ? "theme-light" : "theme-dark";
+    applyTheme(next);
+  });
+}
 
 function fillSelect(sel, headers) {
   sel.innerHTML = "";
