@@ -1,39 +1,39 @@
-
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>CSV Match (Round 3)</title>
+<title>CSV Match (Round 4)</title>
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
   h1 { margin: 0 0 12px; }
   fieldset { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
   legend { padding: 0 6px; }
   label { display: inline-block; margin: 6px 12px 6px 0; }
-  select, input[type="text"], button { padding: 6px 8px; margin: 4px 8px 4px 0; }
+  select, input[type="text"], button { padding: 6px 8px; margin: 4px 8px; }
   .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-  .col { flex: 1 1 280px; }
+  .col { flex: 1 1 320px; }
   .muted { color: #666; }
   .chip { display: inline-block; padding: 2px 6px; background: #f1f1f1; border-radius: 6px; margin-right: 6px; }
   .ok { color: #0a7; font-weight: 600; }
   .warn { color: #b50; font-weight: 600; }
   .bad { color: #c00; font-weight: 600; }
   .box { border: 1px dashed #bbb; border-radius: 8px; padding: 10px; }
-  .grid { display: grid; grid-template-columns: repeat(2, minmax(200px,1fr)); gap: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(260px,1fr)); gap: 12px; }
   .small { font-size: 12px; }
   .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f8f8f8; padding: 2px 4px; border-radius: 4px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
   th { background: #fafafa; position: sticky; top: 0; }
   .review-table { max-height: 300px; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+  .row-inline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
 </head>
 <body>
-<h1>CSV Match (Round 3)</h1>
-<p class="muted">Upload two CSVs, choose a <b>Primary</b>, map <b>Name</b>/<b>Team</b>, review unresolved rows, then export. All in-browser.</p>
+<h1>CSV Match (Round 4)</h1>
+<p class="muted">Upload two CSVs, choose a <b>Primary</b>, map <b>Name</b>/<b>Team</b> (Name can be composed like first+last), review unresolved rows, then export. All in-browser.</p>
 
 <fieldset>
   <legend>1) Upload files</legend>
@@ -57,17 +57,45 @@
   <legend>2) Choose match keys</legend>
   <div class="grid">
     <div>
-      <div><b>File A columns</b></div>
-      <label>Name: <select id="nameA"></select></label>
+      <div><b>File A</b></div>
+      <div class="row-inline">
+        <label>Name mode:
+          <select id="nameModeA">
+            <option value="single">Single column</option>
+            <option value="compose">Compose from columns</option>
+          </select>
+        </label>
+        <label id="nameASingleWrap">Name: <select id="nameA"></select></label>
+      </div>
+      <div id="nameAComposeWrap" class="row-inline" style="display:none;">
+        <label>Compose:
+          <select id="nameACompose" multiple size="5" style="min-width:220px;"></select>
+        </label>
+        <label>Separator: <input type="text" id="nameASeparator" value=" " size="2"/></label>
+      </div>
       <label>Team: <select id="teamA"></select></label>
     </div>
     <div>
-      <div><b>File B columns</b></div>
-      <label>Name: <select id="nameB"></select></label>
+      <div><b>File B</b></div>
+      <div class="row-inline">
+        <label>Name mode:
+          <select id="nameModeB">
+            <option value="single">Single column</option>
+            <option value="compose">Compose from columns</option>
+          </select>
+        </label>
+        <label id="nameBSingleWrap">Name: <select id="nameB"></select></label>
+      </div>
+      <div id="nameBComposeWrap" class="row-inline" style="display:none;">
+        <label>Compose:
+          <select id="nameBCompose" multiple size="5" style="min-width:220px;"></select>
+        </label>
+        <label>Separator: <input type="text" id="nameBSeparator" value=" " size="2"/></label>
+      </div>
       <label>Team: <select id="teamB"></select></label>
     </div>
   </div>
-  <div class="small muted">Matching is restricted within the same canonical team to avoid cross-team collisions. DST names are normalized automatically (e.g., "Baltimore D/ST" → "Baltimore Ravens").</div>
+  <div class="small muted">Matching is restricted to the same canonical team (prevents cross-team collisions). DST names auto-normalized (e.g., "Baltimore D/ST" → "Baltimore Ravens").</div>
 </fieldset>
 
 <fieldset>
@@ -96,7 +124,7 @@
 
   <div id="reviewSection" style="display:none; margin-top:10px;">
     <h3>Review unresolved rows</h3>
-    <p class="small muted">Pick a candidate within the same team, or choose "No match". Tick "Save alias" to remember the chosen mapping for next time.</p>
+    <p class="small muted">Pick a candidate within the same team, or choose "No match". Tick "Save alias" to remember your choice.</p>
     <div class="review-table">
       <table>
         <thead>
@@ -191,12 +219,8 @@ function canonTeam(t) {
   const k = normText(t);
   return NFL_CODE_BY_KEY[k] || k.toUpperCase();
 }
-function isDSTName(n) {
-  return /(d\s*\/\s*st|dst|defense|def)\b/i.test(n || "");
-}
-function teamFullNameFromCode(code) {
-  return NFL_FULL_BY_CODE[code] || code;
-}
+function isDSTName(n) { return /(d\s*\/\s*st|dst|defense|def)\b/i.test(n || ""); }
+function teamFullNameFromCode(code) { return NFL_FULL_BY_CODE[code] || code; }
 function dstNormalizedName(name, teamCode) {
   if (!teamCode) return normName(name);
   return normText(teamFullNameFromCode(teamCode)).split(" ").join(" ");
@@ -208,15 +232,13 @@ function download(filename, text) {
   a.href = url; a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function getAliases() {
-  try { return JSON.parse(localStorage.getItem("csvMatchAliases") || "{}"); } catch { return {}; }
-}
+function getAliases() { try { return JSON.parse(localStorage.getItem("csvMatchAliases") || "{}"); } catch { return {}; } }
 function setAliases(obj) { localStorage.setItem("csvMatchAliases", JSON.stringify(obj)); }
 
 // ---------- state ----------
 let A = null, B = null;
 let headersA = [], headersB = [];
-let merged = null, manifest = null;
+let mergedStore = null, manifest = null;
 let reviewItems = [];
 
 // ---------- UI refs ----------
@@ -224,10 +246,20 @@ const fileA = document.getElementById("fileA");
 const fileB = document.getElementById("fileB");
 const metaA = document.getElementById("metaA");
 const metaB = document.getElementById("metaB");
+const nameModeA = document.getElementById("nameModeA");
+const nameModeB = document.getElementById("nameModeB");
+const nameASingleWrap = document.getElementById("nameASingleWrap");
+const nameAComposeWrap = document.getElementById("nameAComposeWrap");
+const nameBSingleWrap = document.getElementById("nameBSingleWrap");
+const nameBComposeWrap = document.getElementById("nameBComposeWrap");
 const nameA = document.getElementById("nameA");
 const teamA = document.getElementById("teamA");
 const nameB = document.getElementById("nameB");
 const teamB = document.getElementById("teamB");
+const nameACompose = document.getElementById("nameACompose");
+const nameBCompose = document.getElementById("nameBCompose");
+const nameASeparator = document.getElementById("nameASeparator");
+const nameBSeparator = document.getElementById("nameBSeparator");
 const keepA = document.getElementById("keepA");
 const keepB = document.getElementById("keepB");
 const prefA = document.getElementById("prefA");
@@ -247,6 +279,12 @@ function fillSelect(sel, headers) {
   sel.appendChild(opt("— choose —"));
   headers.forEach(h => sel.appendChild(opt(h)));
 }
+function fillMultiSelect(sel, headers) {
+  sel.innerHTML = "";
+  headers.forEach(h => {
+    const o=document.createElement("option"); o.value=h; o.textContent=h; sel.appendChild(o);
+  });
+}
 function fillKeep(box, headers) {
   box.innerHTML = "";
   headers.forEach(h => {
@@ -261,6 +299,20 @@ function parseCSV(file, cb) {
   Papa.parse(file, { header: true, skipEmptyLines: true, complete: r => cb(null, r), error: e => cb(e, null) });
 }
 
+function toggleNameMode(which) {
+  if (which === "A") {
+    const mode = nameModeA.value;
+    nameASingleWrap.style.display = mode === "single" ? "inline-block" : "none";
+    nameAComposeWrap.style.display = mode === "compose" ? "flex" : "none";
+  } else {
+    const mode = nameModeB.value;
+    nameBSingleWrap.style.display = mode === "single" ? "inline-block" : "none";
+    nameBComposeWrap.style.display = mode === "compose" ? "flex" : "none";
+  }
+}
+nameModeA.addEventListener("change", () => toggleNameMode("A"));
+nameModeB.addEventListener("change", () => toggleNameMode("B"));
+
 fileA.addEventListener("change", e => {
   const f = e.target.files[0]; if (!f) return;
   parseCSV(f, (err, res) => {
@@ -268,6 +320,7 @@ fileA.addEventListener("change", e => {
     A = res.data; headersA = res.meta.fields || [];
     metaA.textContent = `${f.name} — ${A.length} rows, ${headersA.length} columns`;
     fillSelect(nameA, headersA); fillSelect(teamA, headersA);
+    fillMultiSelect(nameACompose, headersA);
     fillKeep(keepA, headersA);
   });
 });
@@ -278,16 +331,30 @@ fileB.addEventListener("change", e => {
     B = res.data; headersB = res.meta.fields || [];
     metaB.textContent = `${f.name} — ${B.length} rows, ${headersB.length} columns`;
     fillSelect(nameB, headersB); fillSelect(teamB, headersB);
+    fillMultiSelect(nameBCompose, headersB);
     fillKeep(keepB, headersB);
   });
 });
 
-function buildIndex(rows, nameCol, teamCol) {
+function buildNameGetter(mode, singleSel, composeSel, sep) {
+  if (mode === "compose") {
+    return (row) => {
+      const cols = [...composeSel.selectedOptions].map(o => o.value);
+      const pieces = cols.map(c => (row[c] ?? "").toString().trim()).filter(Boolean);
+      return pieces.join(sep || " ");
+    };
+  } else {
+    return (row) => (row[singleSel.value] ?? "").toString();
+  }
+}
+
+function buildIndex(rows, getName, teamCol) {
   const aliases = getAliases();
   const items = rows.map(r => {
     const teamCode = canonTeam(r[teamCol]);
-    let n = normName(r[nameCol]);
-    if (isDSTName(r[nameCol])) n = dstNormalizedName(r[nameCol], teamCode);
+    let nameRaw = getName(r);
+    let n = normName(nameRaw);
+    if (isDSTName(nameRaw)) n = dstNormalizedName(nameRaw, teamCode);
     const aliasKey = teamCode + "::" + n;
     const aliased = aliases[aliasKey];
     const finalName = aliased || n;
@@ -315,35 +382,42 @@ function gatherKeep(box) {
   return [...box.querySelectorAll('input[type="checkbox"]:checked')].map(i => i.dataset.col);
 }
 
-btnMerge.addEventListener("click", () => {
+document.getElementById("btnMerge").addEventListener("click", () => {
   if (!A || !B) { status.textContent = "Upload both files first."; return; }
   const primary = [...document.querySelectorAll('input[name="primary"]')].find(r => r.checked)?.value || "A";
+
+  const getNameA = buildNameGetter(nameModeA.value, nameA, nameACompose, nameASeparator.value);
+  const getNameB = buildNameGetter(nameModeB.value, nameB, nameBCompose, nameBSeparator.value);
+
   const P = primary === "A" ? A : B;
   const S = primary === "A" ? B : A;
-  const nameP = primary === "A" ? nameA.value : nameB.value;
+  const nameGetterP = primary === "A" ? getNameA : getNameB;
+  const nameGetterS = primary === "A" ? getNameB : getNameA;
   const teamP = primary === "A" ? teamA.value : teamB.value;
-  const nameS = primary === "A" ? nameB.value : nameA.value;
   const teamS = primary === "A" ? teamB.value : teamA.value;
-  if (!nameP || !teamP || !nameS || !teamS || nameP.startsWith("—") || teamP.startsWith("—") || nameS.startsWith("—") || teamS.startsWith("—")) {
-    status.textContent = "Pick Name and Team columns for both files."; return;
+
+  if (!teamP || !teamS || teamP.startsWith("—") || teamS.startsWith("—")) {
+    status.textContent = "Pick Team columns for both files."; return;
   }
+
   const keepColsA = gatherKeep(keepA);
   const keepColsB = gatherKeep(keepB);
   const prefixA = prefA.value || "A_";
   const prefixB = prefB.value || "B_";
 
   status.textContent = "Matching...";
-  const Sidx = buildIndex(S, nameS, teamS);
+  const Sidx = buildIndex(S, nameGetterS, teamS);
 
-  merged = [];
-  reviewItems = [];
   let auto=0, review=0, missing=0;
+  let merged = [];
+  reviewItems = [];
 
   for (let i=0;i<P.length;i++) {
     const pr = P[i];
     const teamCode = canonTeam(pr[teamP]);
-    let norm = normName(pr[nameP]);
-    if (isDSTName(pr[nameP])) norm = dstNormalizedName(pr[nameP], teamCode);
+    let rawName = nameGetterP(pr);
+    let norm = normName(rawName);
+    if (isDSTName(rawName)) norm = dstNormalizedName(rawName, teamCode);
 
     const aliases = getAliases();
     const aliasKey = teamCode + "::" + norm;
@@ -358,55 +432,51 @@ btnMerge.addEventListener("click", () => {
       if (fuse) {
         let res = fuse.search(aliasedNorm).slice(0,3); // strict
         if (!(res.length && res[0].score <= 0.12)) {
-          // fallback: still show top 3 within team so user can pick manually
-          res = fuse.search(aliasedNorm).slice(0,3);
+          res = fuse.search(aliasedNorm).slice(0,3);   // still show top 3
         }
         if (res.length) {
           reason = "review"; review++;
           const cands = res.map(x => ({ name: x.item._norm_name, row: x.item.row }));
-          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: cands, choice: cands[0]?.name || "", saveAlias: true });
+          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: cands, choice: cands[0]?.name || "", saveAlias: true, rawName });
         } else {
           reason = "missing"; missing++;
-          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false });
+          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false, rawName });
         }
       } else {
         reason = "missing"; missing++;
-        reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false });
+        reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false, rawName });
       }
     }
 
+    const out = {};
+    if (primary==="A") { keepColsA.forEach(c => out[(prefixA + c)] = pr[c]); }
+    else { keepColsB.forEach(c => out[(prefixB + c)] = pr[c]); }
     if (match) {
-      const out = {};
-      if (primary==="A") { keepColsA.forEach(c => out[(prefixA + c)] = pr[c]); }
-      else { keepColsB.forEach(c => out[(prefixB + c)] = pr[c]); }
       if (primary==="A") { keepColsB.forEach(c => out[(prefixB + c)] = match[c]); }
       else { keepColsA.forEach(c => out[(prefixA + c)] = match[c]); }
-      out["_match_reason"] = reason;
-      merged.push({ idx:i, data: out });
-    } else {
-      merged.push({ idx:i, data: null, reason });
     }
+    out["_match_reason"] = match ? reason : (reason || "missing");
+    merged.push(out);
   }
 
+  mergedStore = merged;
   manifest = { counts:{ auto, review, missing }, primary };
   status.textContent = "Done.";
   summary.innerHTML = `
     <span class="chip ok">auto: ${auto}</span>
     <span class="chip warn">review: ${review}</span>
     <span class="chip bad">missing: ${missing}</span>
-    <span class="muted">(${merged.length} rows)</span>
+    <span class="muted">(${mergedStore.length} rows)</span>
   `;
-  renderReviewTable(reviewItems, primary, nameP, teamP, S, (primary==="A")?keepColsA:keepColsB, (primary==="A")?keepColsB:keepColsA, prefixA, prefixB);
+  renderReviewTable();
 });
 
-function renderReviewTable(items, primary, nameP, teamP, Srows, keepP, keepS, prefAVal, prefBVal) {
+function renderReviewTable() {
   reviewBody.innerHTML = "";
-  if (!items.length) { reviewSection.style.display = "none"; btnExportCSV.disabled = false; btnExportManifest.disabled = false; return; }
+  if (!reviewItems.length) { reviewSection.style.display = "none"; btnExportCSV.disabled = false; btnExportManifest.disabled = false; return; }
   reviewSection.style.display = "block";
-  items.slice(0, 500).forEach((it, idx) => {
+  reviewItems.slice(0, 500).forEach((it, idx) => {
     const tr = document.createElement("tr");
-    const pname = it.projRow[nameP];
-    const team = it.teamCode;
     const sel = document.createElement("select");
     sel.innerHTML = "";
     const optNone = document.createElement("option"); optNone.value=""; optNone.textContent="— No match —"; sel.appendChild(optNone);
@@ -419,8 +489,8 @@ function renderReviewTable(items, primary, nameP, teamP, Srows, keepP, keepS, pr
     chk.addEventListener("change", () => it.saveAlias = chk.checked);
 
     const td0 = document.createElement("td"); td0.textContent = (idx+1);
-    const td1 = document.createElement("td"); td1.textContent = pname;
-    const td2 = document.createElement("td"); td2.textContent = team;
+    const td1 = document.createElement("td"); td1.textContent = it.rawName || "";
+    const td2 = document.createElement("td"); td2.textContent = it.teamCode;
     const td3 = document.createElement("td"); td3.appendChild(sel);
     const td4 = document.createElement("td"); td4.appendChild(chk);
     tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
@@ -429,32 +499,12 @@ function renderReviewTable(items, primary, nameP, teamP, Srows, keepP, keepS, pr
 
   btnApplyReview.onclick = () => {
     const aliases = getAliases();
-    const Sidx = buildIndex(Srows, (primary==="A")?nameB.value:nameA.value, (primary==="A")?teamB.value:teamA.value);
-
     for (const it of reviewItems) {
-      const i = it.idx;
-      let out = { "_match_reason": merged[i].reason || "review" };
-      const pr = it.projRow;
-      if (primary==="A") { keepP.forEach(c => out[(prefA.value || "A_") + c] = pr[c]); }
-      else { keepP.forEach(c => out[(prefB.value || "B_") + c] = pr[c]); }
-
-      if (it.choice) {
-        const hard = Sidx.map.get(it.choice + "||" + it.teamCode) || [];
-        const matchRow = hard.length ? hard[0].row : null;
-        if (matchRow) {
-          if (primary==="A") { keepS.forEach(c => out[(prefB.value || "B_") + c] = matchRow[c]); }
-          else { keepS.forEach(c => out[(prefA.value || "A_") + c] = matchRow[c]); }
-          out["_match_reason"] = "manual";
-          if (it.saveAlias) {
-            let projNorm = normName(pr[(primary==="A")?nameA.value:nameB.value]);
-            if (isDSTName(pr[(primary==="A")?nameA.value:nameB.value])) projNorm = dstNormalizedName(pr[(primary==="A")?nameA.value:nameB.value], it.teamCode);
-            aliases[it.teamCode + "::" + projNorm] = it.choice;
-          }
-        }
-      } else {
-        out["_match_reason"] = "missing";
+      if (it.choice && it.saveAlias) {
+        let norm = normName(it.rawName);
+        if (isDSTName(it.rawName)) norm = dstNormalizedName(it.rawName, it.teamCode);
+        aliases[it.teamCode + "::" + norm] = it.choice;
       }
-      merged[i].data = out;
     }
     setAliases(aliases);
     btnExportCSV.disabled = false;
@@ -463,13 +513,12 @@ function renderReviewTable(items, primary, nameP, teamP, Srows, keepP, keepS, pr
   };
 }
 
-btnExportCSV.addEventListener("click", () => {
-  if (!merged) return;
-  const rows = merged.map(x => x.data || {});
-  const csv = Papa.unparse(rows);
+document.getElementById("btnExportCSV").addEventListener("click", () => {
+  if (!mergedStore) return;
+  const csv = Papa.unparse(mergedStore);
   download("merged.csv", csv);
 });
-btnExportManifest.addEventListener("click", () => {
+document.getElementById("btnExportManifest").addEventListener("click", () => {
   if (!manifest) return;
   download("manifest.json", JSON.stringify(manifest, null, 2));
 });
