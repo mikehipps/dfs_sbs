@@ -1,0 +1,478 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CSV Match (Round 3)</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+  h1 { margin: 0 0 12px; }
+  fieldset { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
+  legend { padding: 0 6px; }
+  label { display: inline-block; margin: 6px 12px 6px 0; }
+  select, input[type="text"], button { padding: 6px 8px; margin: 4px 8px 4px 0; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .col { flex: 1 1 280px; }
+  .muted { color: #666; }
+  .chip { display: inline-block; padding: 2px 6px; background: #f1f1f1; border-radius: 6px; margin-right: 6px; }
+  .ok { color: #0a7; font-weight: 600; }
+  .warn { color: #b50; font-weight: 600; }
+  .bad { color: #c00; font-weight: 600; }
+  .box { border: 1px dashed #bbb; border-radius: 8px; padding: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(200px,1fr)); gap: 8px; }
+  .small { font-size: 12px; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f8f8f8; padding: 2px 4px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
+  th { background: #fafafa; position: sticky; top: 0; }
+  .review-table { max-height: 300px; overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+</head>
+<body>
+<h1>CSV Match (Round 3)</h1>
+<p class="muted">Upload two CSVs, choose a <b>Primary</b>, map <b>Name</b>/<b>Team</b>, review unresolved rows, then export. All in-browser.</p>
+
+<fieldset>
+  <legend>1) Upload files</legend>
+  <div class="row">
+    <div class="col">
+      <label><b>File A</b> <input type="file" id="fileA" accept=".csv" /></label>
+      <div id="metaA" class="small muted"></div>
+    </div>
+    <div class="col">
+      <label><b>File B</b> <input type="file" id="fileB" accept=".csv" /></label>
+      <div id="metaB" class="small muted"></div>
+    </div>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="primary" value="A" checked> Primary = File A</label>
+    <label><input type="radio" name="primary" value="B"> Primary = File B</label>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>2) Choose match keys</legend>
+  <div class="grid">
+    <div>
+      <div><b>File A columns</b></div>
+      <label>Name: <select id="nameA"></select></label>
+      <label>Team: <select id="teamA"></select></label>
+    </div>
+    <div>
+      <div><b>File B columns</b></div>
+      <label>Name: <select id="nameB"></select></label>
+      <label>Team: <select id="teamB"></select></label>
+    </div>
+  </div>
+  <div class="small muted">Matching is restricted within the same canonical team to avoid cross-team collisions. DST names are normalized automatically (e.g., "Baltimore D/ST" → "Baltimore Ravens").</div>
+</fieldset>
+
+<fieldset>
+  <legend>3) Columns to keep</legend>
+  <div class="row">
+    <div class="col">
+      <div><b>Keep from File A</b></div>
+      <div id="keepA" class="box small"></div>
+      <label>Prefix for A-kept columns: <input id="prefA" type="text" value="A_" /></label>
+    </div>
+    <div class="col">
+      <div><b>Keep from File B</b></div>
+      <div id="keepB" class="box small"></div>
+      <label>Prefix for B-kept columns: <input id="prefB" type="text" value="B_" /></label>
+    </div>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>4) Merge</legend>
+  <div class="row">
+    <button id="btnMerge">Run match</button>
+    <span id="status" class="muted"></span>
+  </div>
+  <div id="summary" class="small"></div>
+
+  <div id="reviewSection" style="display:none; margin-top:10px;">
+    <h3>Review unresolved rows</h3>
+    <p class="small muted">Pick a candidate within the same team, or choose "No match". Tick "Save alias" to remember the chosen mapping for next time.</p>
+    <div class="review-table">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Primary Name</th>
+            <th>Team</th>
+            <th>Candidates (same team)</th>
+            <th>Save alias</th>
+          </tr>
+        </thead>
+        <tbody id="reviewBody"></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="btnApplyReview">Apply review & update</button>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:10px;">
+    <button id="btnExportCSV" disabled>Download merged.csv</button>
+    <button id="btnExportManifest" disabled>Download manifest.json</button>
+  </div>
+</fieldset>
+
+<script>
+// ---------- helpers ----------
+const SUFFIXES = new Set(["jr","sr","ii","iii","iv","v"]);
+const NICK = { "mike":"michael","tony":"anthony","aj":"a j","a.j.":"a j","jd":"j d","j.d.":"j d",
+               "rob":"robert","bob":"robert","rick":"richard","dave":"david","chris":"christopher",
+               "drew":"andrew","andy":"andrew","bill":"william","billy":"william","will":"william",
+               "alex":"alexander","sasha":"alexander" };
+
+const NFL_CODE_BY_KEY = {
+  "ari":"ARI","arizona":"ARI","arizona cardinals":"ARI","cardinals":"ARI",
+  "atl":"ATL","atlanta":"ATL","atlanta falcons":"ATL","falcons":"ATL",
+  "bal":"BAL","baltimore":"BAL","baltimore ravens":"BAL","ravens":"BAL",
+  "buf":"BUF","buffalo":"BUF","buffalo bills":"BUF","bills":"BUF","buffallo":"BUF",
+  "car":"CAR","carolina":"CAR","carolina panthers":"CAR","panthers":"CAR",
+  "chi":"CHI","chicago":"CHI","chicago bears":"CHI","bears":"CHI",
+  "cin":"CIN","cincinnati":"CIN","cincinnati bengals":"CIN","bengals":"CIN",
+  "cle":"CLE","cleveland":"CLE","cleveland browns":"CLE","browns":"CLE",
+  "dal":"DAL","dallas":"DAL","dallas cowboys":"DAL","cowboys":"DAL",
+  "den":"DEN","denver":"DEN","denver broncos":"DEN","broncos":"DEN",
+  "det":"DET","detroit":"DET","detroit lions":"DET","lions":"DET",
+  "gb":"GB","gnb":"GB","green bay":"GB","green bay packers":"GB","packers":"GB",
+  "hou":"HOU","houston":"HOU","houston texans":"HOU","texans":"HOU",
+  "ind":"IND","indianapolis":"IND","indianapolis colts":"IND","colts":"IND",
+  "jax":"JAX","jac":"JAX","jacksonville":"JAX","jacksonville jaguars":"JAX","jaguars":"JAX",
+  "kc":"KC","kan":"KC","kansas city":"KC","kansas city chiefs":"KC","chiefs":"KC",
+  "lv":"LV","las vegas":"LV","oak":"LV","rai":"LV","las vegas raiders":"LV","raiders":"LV",
+  "lac":"LAC","sd":"LAC","los angeles chargers":"LAC","chargers":"LAC",
+  "lar":"LAR","los angeles rams":"LAR","rams":"LAR",
+  "mia":"MIA","miami":"MIA","miami dolphins":"MIA","dolphins":"MIA",
+  "min":"MIN","minnesota":"MIN","minnesota vikings":"MIN","vikings":"MIN",
+  "ne":"NE","nwe":"NE","new england":"NE","new england patriots":"NE","patriots":"NE",
+  "no":"NO","nor":"NO","new orleans":"NO","new orleans saints":"NO","saints":"NO",
+  "nyg":"NYG","new york giants":"NYG","giants":"NYG",
+  "nyj":"NYJ","new york jets":"NYJ","jets":"NYJ",
+  "phi":"PHI","philadelphia":"PHI","philadelphia eagles":"PHI","eagles":"PHI",
+  "pit":"PIT","pittsburgh":"PIT","pittsburgh steelers":"PIT","steelers":"PIT",
+  "sf":"SF","sfo":"SF","san francisco":"SF","san francisco 49ers":"SF","49ers":"SF","niners":"SF",
+  "sea":"SEA","seattle":"SEA","seattle seahawks":"SEA","seahawks":"SEA",
+  "tb":"TB","tampa":"TB","tampa bay":"TB","tampa bay buccaneers":"TB","bucs":"TB","buccaneers":"TB",
+  "ten":"TEN","tens":"TEN","tennessee":"TEN","tennessee titans":"TEN","titans":"TEN",
+  "was":"WAS","wsh":"WAS","washington":"WAS","washington commanders":"WAS","commanders":"WAS","football team":"WAS","redskins":"WAS"
+};
+const NFL_FULL_BY_CODE = {
+  "ARI":"Arizona Cardinals","ATL":"Atlanta Falcons","BAL":"Baltimore Ravens","BUF":"Buffalo Bills",
+  "CAR":"Carolina Panthers","CHI":"Chicago Bears","CIN":"Cincinnati Bengals","CLE":"Cleveland Browns",
+  "DAL":"Dallas Cowboys","DEN":"Denver Broncos","DET":"Detroit Lions","GB":"Green Bay Packers",
+  "HOU":"Houston Texans","IND":"Indianapolis Colts","JAX":"Jacksonville Jaguars","KC":"Kansas City Chiefs",
+  "LV":"Las Vegas Raiders","LAC":"Los Angeles Chargers","LAR":"Los Angeles Rams","MIA":"Miami Dolphins",
+  "MIN":"Minnesota Vikings","NE":"New England Patriots","NO":"New Orleans Saints","NYG":"New York Giants",
+  "NYJ":"New York Jets","PHI":"Philadelphia Eagles","PIT":"Pittsburgh Steelers","SF":"San Francisco 49ers",
+  "SEA":"Seattle Seahawks","TB":"Tampa Bay Buccaneers","TEN":"Tennessee Titans","WAS":"Washington Commanders"
+};
+
+function normText(x) {
+  if (x == null) return "";
+  return (x+"")
+    .normalize("NFKD").replace(/[^\u0000-\u007E]/g, "")
+    .replace(/[^a-zA-Z0-9\s]/g, " ").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function normName(name) {
+  const t = normText(name);
+  const parts = t.split(" ").filter(Boolean).map(w => NICK[w] || w).join(" ").split(" ");
+  const cleaned = parts.filter(w => !SUFFIXES.has(w));
+  return cleaned.join(" ");
+}
+function canonTeam(t) {
+  const k = normText(t);
+  return NFL_CODE_BY_KEY[k] || k.toUpperCase();
+}
+function isDSTName(n) {
+  return /(d\s*\/\s*st|dst|defense|def)\b/i.test(n || "");
+}
+function teamFullNameFromCode(code) {
+  return NFL_FULL_BY_CODE[code] || code;
+}
+function dstNormalizedName(name, teamCode) {
+  if (!teamCode) return normName(name);
+  return normText(teamFullNameFromCode(teamCode)).split(" ").join(" ");
+}
+function download(filename, text) {
+  const blob = new Blob([text], {type: "text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function getAliases() {
+  try { return JSON.parse(localStorage.getItem("csvMatchAliases") || "{}"); } catch { return {}; }
+}
+function setAliases(obj) { localStorage.setItem("csvMatchAliases", JSON.stringify(obj)); }
+
+// ---------- state ----------
+let A = null, B = null;
+let headersA = [], headersB = [];
+let merged = null, manifest = null;
+let reviewItems = [];
+
+// ---------- UI refs ----------
+const fileA = document.getElementById("fileA");
+const fileB = document.getElementById("fileB");
+const metaA = document.getElementById("metaA");
+const metaB = document.getElementById("metaB");
+const nameA = document.getElementById("nameA");
+const teamA = document.getElementById("teamA");
+const nameB = document.getElementById("nameB");
+const teamB = document.getElementById("teamB");
+const keepA = document.getElementById("keepA");
+const keepB = document.getElementById("keepB");
+const prefA = document.getElementById("prefA");
+const prefB = document.getElementById("prefB");
+const btnMerge = document.getElementById("btnMerge");
+const btnExportCSV = document.getElementById("btnExportCSV");
+const btnExportManifest = document.getElementById("btnExportManifest");
+const status = document.getElementById("status");
+const summary = document.getElementById("summary");
+const reviewSection = document.getElementById("reviewSection");
+const reviewBody = document.getElementById("reviewBody");
+const btnApplyReview = document.getElementById("btnApplyReview");
+
+function fillSelect(sel, headers) {
+  sel.innerHTML = "";
+  const opt = (v) => { const o=document.createElement("option"); o.value=v; o.textContent=v; return o; };
+  sel.appendChild(opt("— choose —"));
+  headers.forEach(h => sel.appendChild(opt(h)));
+}
+function fillKeep(box, headers) {
+  box.innerHTML = "";
+  headers.forEach(h => {
+    const lbl = document.createElement("label");
+    lbl.style.display = "inline-block";
+    lbl.style.marginRight = "10px";
+    lbl.innerHTML = `<input type="checkbox" data-col="${h}" checked> <span class="code">${h}</span>`;
+    box.appendChild(lbl);
+  });
+}
+function parseCSV(file, cb) {
+  Papa.parse(file, { header: true, skipEmptyLines: true, complete: r => cb(null, r), error: e => cb(e, null) });
+}
+
+fileA.addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  parseCSV(f, (err, res) => {
+    if (err) { metaA.textContent = "Error parsing A: " + err; return; }
+    A = res.data; headersA = res.meta.fields || [];
+    metaA.textContent = `${f.name} — ${A.length} rows, ${headersA.length} columns`;
+    fillSelect(nameA, headersA); fillSelect(teamA, headersA);
+    fillKeep(keepA, headersA);
+  });
+});
+fileB.addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  parseCSV(f, (err, res) => {
+    if (err) { metaB.textContent = "Error parsing B: " + err; return; }
+    B = res.data; headersB = res.meta.fields || [];
+    metaB.textContent = `${f.name} — ${B.length} rows, ${headersB.length} columns`;
+    fillSelect(nameB, headersB); fillSelect(teamB, headersB);
+    fillKeep(keepB, headersB);
+  });
+});
+
+function buildIndex(rows, nameCol, teamCol) {
+  const aliases = getAliases();
+  const items = rows.map(r => {
+    const teamCode = canonTeam(r[teamCol]);
+    let n = normName(r[nameCol]);
+    if (isDSTName(r[nameCol])) n = dstNormalizedName(r[nameCol], teamCode);
+    const aliasKey = teamCode + "::" + n;
+    const aliased = aliases[aliasKey];
+    const finalName = aliased || n;
+    return { row:r, _norm_name:finalName, _norm_team:teamCode };
+  });
+  const map = new Map();
+  for (const it of items) {
+    const key = it._norm_name + "||" + it._norm_team;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(it);
+  }
+  const byTeam = new Map();
+  for (const it of items) {
+    if (!byTeam.has(it._norm_team)) byTeam.set(it._norm_team, []);
+    byTeam.get(it._norm_team).push(it);
+  }
+  const fuseByTeam = new Map();
+  for (const [t, arr] of byTeam.entries()) {
+    fuseByTeam.set(t, new Fuse(arr, { keys: ["_norm_name"], threshold: 0.12, includeScore: true }));
+  }
+  return { items, map, fuseByTeam };
+}
+
+function gatherKeep(box) {
+  return [...box.querySelectorAll('input[type="checkbox"]:checked')].map(i => i.dataset.col);
+}
+
+btnMerge.addEventListener("click", () => {
+  if (!A || !B) { status.textContent = "Upload both files first."; return; }
+  const primary = [...document.querySelectorAll('input[name="primary"]')].find(r => r.checked)?.value || "A";
+  const P = primary === "A" ? A : B;
+  const S = primary === "A" ? B : A;
+  const nameP = primary === "A" ? nameA.value : nameB.value;
+  const teamP = primary === "A" ? teamA.value : teamB.value;
+  const nameS = primary === "A" ? nameB.value : nameA.value;
+  const teamS = primary === "A" ? teamB.value : teamA.value;
+  if (!nameP || !teamP || !nameS || !teamS || nameP.startsWith("—") || teamP.startsWith("—") || nameS.startsWith("—") || teamS.startsWith("—")) {
+    status.textContent = "Pick Name and Team columns for both files."; return;
+  }
+  const keepColsA = gatherKeep(keepA);
+  const keepColsB = gatherKeep(keepB);
+  const prefixA = prefA.value || "A_";
+  const prefixB = prefB.value || "B_";
+
+  status.textContent = "Matching...";
+  const Sidx = buildIndex(S, nameS, teamS);
+
+  merged = [];
+  reviewItems = [];
+  let auto=0, review=0, missing=0;
+
+  for (let i=0;i<P.length;i++) {
+    const pr = P[i];
+    const teamCode = canonTeam(pr[teamP]);
+    let norm = normName(pr[nameP]);
+    if (isDSTName(pr[nameP])) norm = dstNormalizedName(pr[nameP], teamCode);
+
+    const aliases = getAliases();
+    const aliasKey = teamCode + "::" + norm;
+    const aliasedNorm = aliases[aliasKey] || norm;
+
+    let match = null, reason = "";
+    const hard = Sidx.map.get(aliasedNorm + "||" + teamCode) || [];
+    if (hard.length === 1) { match = hard[0].row; reason = "exact"; auto++; }
+    else if (hard.length > 1) { match = hard[0].row; reason = "exact_multi"; auto++; }
+    else {
+      const fuse = Sidx.fuseByTeam.get(teamCode);
+      if (fuse) {
+        let res = fuse.search(aliasedNorm).slice(0,3); // strict
+        if (!(res.length && res[0].score <= 0.12)) {
+          // fallback: still show top 3 within team so user can pick manually
+          res = fuse.search(aliasedNorm).slice(0,3);
+        }
+        if (res.length) {
+          reason = "review"; review++;
+          const cands = res.map(x => ({ name: x.item._norm_name, row: x.item.row }));
+          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: cands, choice: cands[0]?.name || "", saveAlias: true });
+        } else {
+          reason = "missing"; missing++;
+          reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false });
+        }
+      } else {
+        reason = "missing"; missing++;
+        reviewItems.push({ idx:i, projRow: pr, teamCode, candidates: [], choice: "", saveAlias: false });
+      }
+    }
+
+    if (match) {
+      const out = {};
+      if (primary==="A") { keepColsA.forEach(c => out[(prefixA + c)] = pr[c]); }
+      else { keepColsB.forEach(c => out[(prefixB + c)] = pr[c]); }
+      if (primary==="A") { keepColsB.forEach(c => out[(prefixB + c)] = match[c]); }
+      else { keepColsA.forEach(c => out[(prefixA + c)] = match[c]); }
+      out["_match_reason"] = reason;
+      merged.push({ idx:i, data: out });
+    } else {
+      merged.push({ idx:i, data: null, reason });
+    }
+  }
+
+  manifest = { counts:{ auto, review, missing }, primary };
+  status.textContent = "Done.";
+  summary.innerHTML = `
+    <span class="chip ok">auto: ${auto}</span>
+    <span class="chip warn">review: ${review}</span>
+    <span class="chip bad">missing: ${missing}</span>
+    <span class="muted">(${merged.length} rows)</span>
+  `;
+  renderReviewTable(reviewItems, primary, nameP, teamP, S, (primary==="A")?keepColsA:keepColsB, (primary==="A")?keepColsB:keepColsA, prefixA, prefixB);
+});
+
+function renderReviewTable(items, primary, nameP, teamP, Srows, keepP, keepS, prefAVal, prefBVal) {
+  reviewBody.innerHTML = "";
+  if (!items.length) { reviewSection.style.display = "none"; btnExportCSV.disabled = false; btnExportManifest.disabled = false; return; }
+  reviewSection.style.display = "block";
+  items.slice(0, 500).forEach((it, idx) => {
+    const tr = document.createElement("tr");
+    const pname = it.projRow[nameP];
+    const team = it.teamCode;
+    const sel = document.createElement("select");
+    sel.innerHTML = "";
+    const optNone = document.createElement("option"); optNone.value=""; optNone.textContent="— No match —"; sel.appendChild(optNone);
+    it.candidates.forEach(c => {
+      const o = document.createElement("option"); o.value = c.name; o.textContent = c.name; sel.appendChild(o);
+    });
+    sel.value = it.choice || "";
+    sel.addEventListener("change", () => it.choice = sel.value);
+    const chk = document.createElement("input"); chk.type="checkbox"; chk.checked = !!it.saveAlias;
+    chk.addEventListener("change", () => it.saveAlias = chk.checked);
+
+    const td0 = document.createElement("td"); td0.textContent = (idx+1);
+    const td1 = document.createElement("td"); td1.textContent = pname;
+    const td2 = document.createElement("td"); td2.textContent = team;
+    const td3 = document.createElement("td"); td3.appendChild(sel);
+    const td4 = document.createElement("td"); td4.appendChild(chk);
+    tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+    reviewBody.appendChild(tr);
+  });
+
+  btnApplyReview.onclick = () => {
+    const aliases = getAliases();
+    const Sidx = buildIndex(Srows, (primary==="A")?nameB.value:nameA.value, (primary==="A")?teamB.value:teamA.value);
+
+    for (const it of reviewItems) {
+      const i = it.idx;
+      let out = { "_match_reason": merged[i].reason || "review" };
+      const pr = it.projRow;
+      if (primary==="A") { keepP.forEach(c => out[(prefA.value || "A_") + c] = pr[c]); }
+      else { keepP.forEach(c => out[(prefB.value || "B_") + c] = pr[c]); }
+
+      if (it.choice) {
+        const hard = Sidx.map.get(it.choice + "||" + it.teamCode) || [];
+        const matchRow = hard.length ? hard[0].row : null;
+        if (matchRow) {
+          if (primary==="A") { keepS.forEach(c => out[(prefB.value || "B_") + c] = matchRow[c]); }
+          else { keepS.forEach(c => out[(prefA.value || "A_") + c] = matchRow[c]); }
+          out["_match_reason"] = "manual";
+          if (it.saveAlias) {
+            let projNorm = normName(pr[(primary==="A")?nameA.value:nameB.value]);
+            if (isDSTName(pr[(primary==="A")?nameA.value:nameB.value])) projNorm = dstNormalizedName(pr[(primary==="A")?nameA.value:nameB.value], it.teamCode);
+            aliases[it.teamCode + "::" + projNorm] = it.choice;
+          }
+        }
+      } else {
+        out["_match_reason"] = "missing";
+      }
+      merged[i].data = out;
+    }
+    setAliases(aliases);
+    btnExportCSV.disabled = false;
+    btnExportManifest.disabled = false;
+    alert("Review applied. You can now export.");
+  };
+}
+
+btnExportCSV.addEventListener("click", () => {
+  if (!merged) return;
+  const rows = merged.map(x => x.data || {});
+  const csv = Papa.unparse(rows);
+  download("merged.csv", csv);
+});
+btnExportManifest.addEventListener("click", () => {
+  if (!manifest) return;
+  download("manifest.json", JSON.stringify(manifest, null, 2));
+});
+</script>
+</body>
+</html>
