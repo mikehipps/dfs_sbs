@@ -34,6 +34,16 @@
 <body>
 <h1>CSV Match (Round 4)</h1>
 <p class="muted">Upload two CSVs, choose a <b>Primary</b>, map <b>Name</b>/<b>Team</b> (Name can be composed like first+last), review unresolved rows, then export. All in-browser.</p>
+<div class="row">
+  <label><b>Sport</b>
+    <select id="sportSelect">
+      <option value="nfl" selected>NFL</option>
+      <option value="mlb">MLB</option>
+      <option value="nba">NBA</option>
+      <option value="nhl">NHL</option>
+    </select>
+  </label>
+</div>
 
 <fieldset>
   <legend>1) Upload files</legend>
@@ -152,13 +162,15 @@
 
 <script>
 // ---------- helpers ----------
-const SUFFIXES = new Set(["jr","sr","ii","iii","iv","v"]);
-const NICK = { "mike":"michael","tony":"anthony","aj":"a j","a.j.":"a j","jd":"j d","j.d.":"j d",
-               "rob":"robert","bob":"robert","rick":"richard","dave":"david","chris":"christopher",
-               "drew":"andrew","andy":"andrew","bill":"william","billy":"william","will":"william",
-               "alex":"alexander","sasha":"alexander" };
+const FALLBACK_SUFFIXES = ["jr","sr","ii","iii","iv","v"];
+const FALLBACK_NICK = {
+  "mike":"michael","tony":"anthony","aj":"a j","a.j.":"a j","jd":"j d","j.d.":"j d",
+  "rob":"robert","bob":"robert","rick":"richard","dave":"david","chris":"christopher",
+  "drew":"andrew","andy":"andrew","bill":"william","billy":"william","will":"william",
+  "alex":"alexander","sasha":"alexander"
+};
 
-const NFL_CODE_BY_KEY = {
+const FALLBACK_NFL_CODE_BY_KEY = {
   "ari":"ARI","arizona":"ARI","arizona cardinals":"ARI","cardinals":"ARI",
   "atl":"ATL","atlanta":"ATL","atlanta falcons":"ATL","falcons":"ATL",
   "bal":"BAL","baltimore":"BAL","baltimore ravens":"BAL","ravens":"BAL",
@@ -192,7 +204,7 @@ const NFL_CODE_BY_KEY = {
   "ten":"TEN","tens":"TEN","tennessee":"TEN","tennessee titans":"TEN","titans":"TEN",
   "was":"WAS","wsh":"WAS","washington":"WAS","washington commanders":"WAS","commanders":"WAS","football team":"WAS","redskins":"WAS"
 };
-const NFL_FULL_BY_CODE = {
+const FALLBACK_NFL_FULL_BY_CODE = {
   "ARI":"Arizona Cardinals","ATL":"Atlanta Falcons","BAL":"Baltimore Ravens","BUF":"Buffalo Bills",
   "CAR":"Carolina Panthers","CHI":"Chicago Bears","CIN":"Cincinnati Bengals","CLE":"Cleveland Browns",
   "DAL":"Dallas Cowboys","DEN":"Denver Broncos","DET":"Detroit Lions","GB":"Green Bay Packers",
@@ -202,6 +214,125 @@ const NFL_FULL_BY_CODE = {
   "NYJ":"New York Jets","PHI":"Philadelphia Eagles","PIT":"Pittsburgh Steelers","SF":"San Francisco 49ers",
   "SEA":"Seattle Seahawks","TB":"Tampa Bay Buccaneers","TEN":"Tennessee Titans","WAS":"Washington Commanders"
 };
+const FALLBACK_DST_PATTERNS = ["d/st","dst","defense","def"];
+
+let SUFFIXES;
+let NICK;
+let NFL_CODE_BY_KEY;
+let NFL_FULL_BY_CODE;
+let DST_PATTERNS;
+let DST_REGEX = /(?!)/i;
+let sportLoadToken = 0;
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function dstPatternToRegexSource(pattern) {
+  const escaped = escapeRegex(pattern);
+  const withSlash = escaped.replace(/\\\//g, "\\s*\\/\\s*");
+  return withSlash.replace(/\s+/g, "\\s*");
+}
+function buildDSTRegex(patterns) {
+  const sources = (Array.isArray(patterns) ? patterns : [])
+    .map(p => (p ?? "").toString().trim().toLowerCase())
+    .filter(Boolean)
+    .map(dstPatternToRegexSource);
+  if (!sources.length) {
+    return /(?!)/i;
+  }
+  return new RegExp("(?:" + sources.join("|") + ")\\b", "i");
+}
+function sanitizeStringList(list) {
+  return (Array.isArray(list) ? list : [])
+    .map(item => (item ?? "").toString().trim().toLowerCase())
+    .filter(Boolean);
+}
+function buildSuffixSet(list) {
+  return new Set(sanitizeStringList(list));
+}
+function applyTeamOverrides(map) {
+  if (!isPlainObject(map)) return;
+  Object.entries(map).forEach(([key, value]) => {
+    if (typeof value !== "string") return;
+    NFL_CODE_BY_KEY[key.toLowerCase()] = value.toUpperCase();
+  });
+}
+function applyTeamFullOverrides(map) {
+  if (!isPlainObject(map)) return;
+  Object.entries(map).forEach(([key, value]) => {
+    if (typeof value !== "string") return;
+    NFL_FULL_BY_CODE[key.toUpperCase()] = value;
+  });
+}
+function applyNicknameOverrides(source) {
+  if (!isPlainObject(source)) return;
+  Object.entries(source).forEach(([key, value]) => {
+    if (typeof value !== "string") return;
+    const k = key.toLowerCase();
+    const v = value.toLowerCase();
+    if (k && v) NICK[k] = v;
+  });
+}
+function initializeDataFromFallback() {
+  NFL_CODE_BY_KEY = {};
+  applyTeamOverrides(FALLBACK_NFL_CODE_BY_KEY);
+  NFL_FULL_BY_CODE = {};
+  applyTeamFullOverrides(FALLBACK_NFL_FULL_BY_CODE);
+  NICK = {};
+  applyNicknameOverrides(FALLBACK_NICK);
+  SUFFIXES = buildSuffixSet(FALLBACK_SUFFIXES);
+  DST_PATTERNS = sanitizeStringList(FALLBACK_DST_PATTERNS);
+  DST_REGEX = buildDSTRegex(DST_PATTERNS);
+}
+async function fetchJSON(path) {
+  try {
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+async function loadDataSeeds(sport) {
+  const requestId = ++sportLoadToken;
+  try {
+    const [teamData, nickData, suffixData, dstData] = await Promise.all([
+      fetchJSON(`data/${sport}_teams.json`),
+      fetchJSON("data/nicknames_common.json"),
+      fetchJSON("data/suffixes.json"),
+      fetchJSON("data/dst_patterns.json")
+    ]);
+    if (requestId !== sportLoadToken) return;
+
+    initializeDataFromFallback();
+
+    if (teamData && isPlainObject(teamData.map)) {
+      applyTeamOverrides(teamData.map);
+    }
+    if (teamData && isPlainObject(teamData.fullByCode)) {
+      applyTeamFullOverrides(teamData.fullByCode);
+    }
+    if (isPlainObject(nickData)) {
+      applyNicknameOverrides(nickData);
+    }
+    if (Array.isArray(suffixData) && suffixData.length) {
+      SUFFIXES = buildSuffixSet(suffixData);
+    }
+    if (Array.isArray(dstData) && dstData.length) {
+      DST_PATTERNS = sanitizeStringList(dstData);
+      DST_REGEX = buildDSTRegex(DST_PATTERNS);
+    }
+  } catch (err) {
+    if (requestId !== sportLoadToken) return;
+    console.warn("Failed to load data seeds", err);
+    initializeDataFromFallback();
+  }
+}
+
+initializeDataFromFallback();
 
 function normText(x) {
   if (x == null) return "";
@@ -219,7 +350,7 @@ function canonTeam(t) {
   const k = normText(t);
   return NFL_CODE_BY_KEY[k] || k.toUpperCase();
 }
-function isDSTName(n) { return /(d\s*\/\s*st|dst|defense|def)\b/i.test(n || ""); }
+function isDSTName(n) { return DST_REGEX.test(n || ""); }
 function teamFullNameFromCode(code) { return NFL_FULL_BY_CODE[code] || code; }
 function dstNormalizedName(name, teamCode) {
   if (!teamCode) return normName(name);
@@ -242,6 +373,7 @@ let mergedStore = null, manifest = null;
 let reviewItems = [];
 
 // ---------- UI refs ----------
+const sportSelect = document.getElementById("sportSelect");
 const fileA = document.getElementById("fileA");
 const fileB = document.getElementById("fileB");
 const metaA = document.getElementById("metaA");
@@ -522,6 +654,11 @@ document.getElementById("btnExportManifest").addEventListener("click", () => {
   if (!manifest) return;
   download("manifest.json", JSON.stringify(manifest, null, 2));
 });
+
+sportSelect.addEventListener("change", () => {
+  loadDataSeeds(sportSelect.value);
+});
+loadDataSeeds(sportSelect.value);
 </script>
 </body>
 </html>
