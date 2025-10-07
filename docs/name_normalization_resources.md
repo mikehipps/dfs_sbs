@@ -2,6 +2,15 @@
 
 This document summarizes options for augmenting the handcrafted `nicknames_common.json` and `suffixes.json` datasets.
 
+## Current implementation
+
+We currently vendor two open datasets and serialize them into our working JSON files via [`scripts/build_name_datasets.py`](../scripts/build_name_datasets.py):
+
+- [`third_party/name_data/joshfraser_nicknames.json`](../third_party/name_data/joshfraser_nicknames.json) (MIT) provides the bulk of the nickname aliases.
+- [`third_party/name_data/nameparser_suffixes.json`](../third_party/name_data/nameparser_suffixes.json) (BSD-licensed configuration from `nameparser`) supplies our suffix list.
+
+Running the script rewrites `data/nicknames_common.json` and `data/suffixes.json`, merging the vendored data with `data/nickname_overrides.json` and `data/suffix_overrides.json` for any sports-specific tweaks.
+
 ## Nicknames
 
 | Source | Notes |
@@ -25,4 +34,4 @@ For suffixes, importing a vetted list from `nameparser` or `probablepeople` woul
 
 ## Recommendation
 
-Adopting one of the open datasets (for example, vendoring the `joshfraser/nicknames` JSON and the `nameparser` suffix list) gives us comprehensive coverage with minimal ongoing maintenance. We can still keep local overrides for sports-specific spellings, but versioning the upstream data keeps updates straightforward. Until we wire up an ingestion step, it is reasonable to append entries as we encounter them—just document the source so that we can reconcile with the upstream dataset later.
+We now vendor the recommended datasets listed above. To pull in updates from upstream, refresh the files in `third_party/name_data/` (keeping attribution intact) and rerun `scripts/build_name_datasets.py`. Additional sources listed in the following sections remain good candidates if we ever need even wider coverage or internationalization.
